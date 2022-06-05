@@ -431,8 +431,8 @@ class CognitoUser {
   /// This is used for authenticating the user through the custom authentication flow.
   Future<CognitoUserSession?> initiateAuth(
       AuthenticationDetails authDetails) async {
-    final authParameters =
-        (authDetails.getAuthParameters() ?? []).fold({}, (dynamic value, element) {
+    final authParameters = (authDetails.getAuthParameters() ?? []).fold({},
+        (dynamic value, element) {
       value[element.name] = element.value;
       return value;
     });
@@ -593,14 +593,14 @@ class CognitoUser {
 
     final challengeParameters = data['ChallengeParameters'];
 
-    String srpUsername = challengeParameters['USER_ID_FOR_SRP'];
+    username = challengeParameters['USER_ID_FOR_SRP'];
     serverBValue = BigInt.parse(challengeParameters['SRP_B'], radix: 16);
     saltString =
         authenticationHelper.toUnsignedHex(challengeParameters['SALT']);
     salt = BigInt.parse(saltString, radix: 16);
 
     var hkdf = authenticationHelper.getPasswordAuthenticationKey(
-      srpUsername,
+      username,
       authDetails.getPassword(),
       serverBValue,
       salt,
@@ -612,14 +612,14 @@ class CognitoUser {
     final signatureData = <int>[];
     signatureData
       ..addAll(utf8.encode(pool.getUserPoolId().split('_')[1]))
-      ..addAll(utf8.encode(srpUsername))
+      ..addAll(utf8.encode(username!))
       ..addAll(base64.decode(challengeParameters['SECRET_BLOCK']))
       ..addAll(utf8.encode(dateNow));
     final dig = signature.convert(signatureData);
     final signatureString = base64.encode(dig.bytes);
 
     final challengeResponses = {
-      'USERNAME': srpUsername,
+      'USERNAME': username,
       'PASSWORD_CLAIM_SECRET_BLOCK': challengeParameters['SECRET_BLOCK'],
       'TIMESTAMP': dateNow,
       'PASSWORD_CLAIM_SIGNATURE': signatureString,
