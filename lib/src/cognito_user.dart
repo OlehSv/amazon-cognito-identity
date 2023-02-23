@@ -35,7 +35,7 @@ class CognitoUser {
   String? _deviceKey;
   String? _randomPassword;
   String? _deviceGroupKey;
-  String? _session;
+  String? session;
   CognitoUserSession? _signInUserSession;
   String? username;
   String? _clientSecret;
@@ -86,35 +86,35 @@ class CognitoUser {
     var challengeParameters = dataAuthenticate['ChallengeParameters'];
 
     if (challengeName == 'SMS_MFA') {
-      _session = dataAuthenticate['Session'];
+      session = dataAuthenticate['Session'];
       throw CognitoUserMfaRequiredException(
           challengeName: challengeName,
           challengeParameters: challengeParameters);
     }
 
     if (challengeName == 'SELECT_MFA_TYPE') {
-      _session = dataAuthenticate['Session'];
+      session = dataAuthenticate['Session'];
       throw CognitoUserSelectMfaTypeException(
           challengeName: challengeName,
           challengeParameters: challengeParameters);
     }
 
     if (challengeName == 'MFA_SETUP') {
-      _session = dataAuthenticate['Session'];
+      session = dataAuthenticate['Session'];
       throw CognitoUserMfaSetupException(
           challengeName: challengeName,
           challengeParameters: challengeParameters);
     }
 
     if (challengeName == 'SOFTWARE_TOKEN_MFA') {
-      _session = dataAuthenticate['Session'];
+      session = dataAuthenticate['Session'];
       throw CognitoUserTotpRequiredException(
           challengeName: challengeName,
           challengeParameters: challengeParameters);
     }
 
     if (challengeName == 'CUSTOM_CHALLENGE') {
-      _session = dataAuthenticate['Session'];
+      session = dataAuthenticate['Session'];
       throw CognitoUserCustomChallengeException(
           challengeName: challengeName,
           challengeParameters: challengeParameters);
@@ -481,7 +481,7 @@ class CognitoUser {
     final String? challengeName = data['ChallengeName'];
     final challengeParameters = data['ChallengeParameters'];
     if (challengeName == 'CUSTOM_CHALLENGE') {
-      _session = data['Session'];
+      session = data['Session'];
       throw CognitoUserCustomChallengeException(
           challengeParameters: challengeParameters);
     }
@@ -498,7 +498,7 @@ class CognitoUser {
     if (authenticationFlowType == 'USER_PASSWORD_AUTH') {
       return await _authenticateUserPlainUsernamePassword(authDetails);
     } else if (authenticationFlowType == 'USER_SRP_AUTH' ||
-			         authenticationFlowType == 'CUSTOM_AUTH') {
+        authenticationFlowType == 'CUSTOM_AUTH') {
       return await _authenticateUserDefaultAuth(authDetails);
     }
     throw UnimplementedError('Authentication flow type is not supported.');
@@ -701,7 +701,7 @@ class CognitoUser {
 
     final challengeName = dataAuthenticate['ChallengeName'];
     if (challengeName == 'NEW_PASSWORD_REQUIRED') {
-      _session = dataAuthenticate['Session'];
+      session = dataAuthenticate['Session'];
       dynamic userAttributes;
       dynamic rawRequiredAttributes;
       final requiredAttributes = [];
@@ -785,7 +785,7 @@ class CognitoUser {
   /// This is used by the user once he has the responses to a custom challenge
 
   Future<CognitoUserSession?> sendCustomChallengeAnswer(String answerChallenge,
-      [Map<String, String>? validationData]) async {
+      [Map<String, String>? validationData, String? resumeSession]) async {
     final challengeResponses = {
       'USERNAME': username,
       'ANSWER': answerChallenge,
@@ -808,7 +808,7 @@ class CognitoUser {
       'ChallengeResponses': challengeResponses,
       'ClientId': pool.getClientId(),
       'ClientMetadata': validationData,
-      'Session': _session,
+      'Session': resumeSession ?? session,
     };
 
     if (getUserContextData() != null) {
@@ -855,7 +855,7 @@ class CognitoUser {
       'ChallengeName': 'NEW_PASSWORD_REQUIRED',
       'ChallengeResponses': challengeResponses,
       'ClientId': pool.getClientId(),
-      'Session': _session,
+      'Session': session,
     };
 
     if (getUserContextData() != null) {
@@ -888,7 +888,7 @@ class CognitoUser {
       'ChallengeName': mfaType,
       'ChallengeResponses': challengeResponses,
       'ClientId': pool.getClientId(),
-      'Session': _session,
+      'Session': session,
     };
     if (getUserContextData() != null) {
       paramsReq['UserContextData'] = getUserContextData();
@@ -989,7 +989,7 @@ class CognitoUser {
     if (_signInUserSession == null || !_signInUserSession!.isValid()) {
       throw Exception('User is not authenticated');
     }
-    
+
     bool phoneNumberVerified = false;
     final getUserParamsReq = {
       'AccessToken': _signInUserSession!.getAccessToken().getJwtToken(),
@@ -1010,7 +1010,7 @@ class CognitoUser {
     if (!phoneNumberVerified) {
       throw CognitoUserPhoneNumberVerificationNecessaryException(
           signInUserSession: _signInUserSession);
-    }    
+    }
 
     final mfaOptions = [];
     final mfaEnabled = {
