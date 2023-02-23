@@ -38,6 +38,7 @@ class CognitoUser {
   String? _session;
   CognitoUserSession? _signInUserSession;
   String? username;
+  String? _clientSecret;
   String? _clientSecretHash;
   CognitoUserPool pool;
   Client? client;
@@ -58,8 +59,12 @@ class CognitoUser {
   }) : _analyticsMetadataParamsDecorator =
             analyticsMetadataParamsDecorator ?? NoOpsParamsDecorator() {
     if (clientSecret != null) {
+      _clientSecret = clientSecret;
       _clientSecretHash = calculateClientSecretHash(
-          username!, pool.getClientId()!, clientSecret);
+        username!,
+        pool.getClientId()!,
+        _clientSecret!,
+      );
     }
     if (signInUserSession != null) {
       _signInUserSession = signInUserSession;
@@ -183,34 +188,50 @@ class CognitoUser {
     final refreshTokenKey = '$keyPrefix.refreshToken';
     final clockDriftKey = '$keyPrefix.clockDrift';
 
-    if (await storage.getItem(idTokenKey) != null) {
-      final idToken = CognitoIdToken(await storage.getItem(idTokenKey));
-      final accessToken =
-          CognitoAccessToken(await storage.getItem(accessTokenKey));
-      final refreshToken =
-          CognitoRefreshToken(await storage.getItem(refreshTokenKey));
-      final clockDrift = int.parse(await storage.getItem(clockDriftKey));
+    final refreshTokenValue = await storage.getItem(refreshTokenKey);
+    final refreshToken = CognitoRefreshToken(refreshTokenValue);
+    final canRefreshToken = refreshToken.getToken() != null;
 
-      final cachedSession = CognitoUserSession(
-        idToken,
-        accessToken,
-        refreshToken: refreshToken,
-        clockDrift: clockDrift,
-      );
+    final clockDriftValue = await storage.getItem(clockDriftKey);
+    final clockDrift = int.tryParse(clockDriftValue ?? '');
 
-      if (cachedSession.isValid()) {
-        _signInUserSession = cachedSession;
-        return _signInUserSession;
+    final idTokenValue = await storage.getItem(idTokenKey);
+    if (idTokenValue == null) {
+      if (canRefreshToken) {
+        return refreshSession(refreshToken);
       }
+      throw Exception(
+          'Local storage is missing an ID Token, Please authenticate');
+    }
+    final idToken = CognitoIdToken(idTokenValue);
 
-      if (refreshToken.getToken() == null) {
-        throw Exception('Cannot retrieve a new session. Please authenticate.');
+    final accessTokenValue = await storage.getItem(accessTokenKey);
+    if (accessTokenValue == null) {
+      if (canRefreshToken) {
+        return refreshSession(refreshToken);
       }
+      throw Exception(
+          'Local storage is missing an Access Token, Please authenticate');
+    }
+    final accessToken = CognitoAccessToken(accessTokenValue);
 
+    final cachedSession = CognitoUserSession(
+      idToken,
+      accessToken,
+      refreshToken: refreshToken,
+      clockDrift: clockDrift,
+    );
+
+    if (cachedSession.isValid()) {
+      _signInUserSession = cachedSession;
+      return _signInUserSession;
+    }
+
+    if (canRefreshToken) {
       return refreshSession(refreshToken);
     }
-    throw Exception(
-        'Local storage is missing an ID Token, Please authenticate');
+
+    throw Exception('Cannot retrieve a new session. Please authenticate.');
   }
 
   /// This is used to initiate an attribute confirmation request
@@ -255,9 +276,10 @@ class CognitoUser {
       final deviceKeyKey = '$keyPrefix.deviceKey';
       _deviceKey = await storage.getItem(deviceKeyKey);
       authParameters['DEVICE_KEY'] = _deviceKey;
-      if (_clientSecretHash != null) {
-        authParameters['SECRET_HASH'] = _clientSecretHash;
-      }
+    }
+
+    if (_clientSecret != null) {
+      authParameters['SECRET_HASH'] = _clientSecret;
     }
 
     final paramsReq = {
@@ -475,7 +497,8 @@ class CognitoUser {
       AuthenticationDetails authDetails) async {
     if (authenticationFlowType == 'USER_PASSWORD_AUTH') {
       return await _authenticateUserPlainUsernamePassword(authDetails);
-    } else if (authenticationFlowType == 'USER_SRP_AUTH') {
+    } else if (authenticationFlowType == 'USER_SRP_AUTH' ||
+			         authenticationFlowType == 'CUSTOM_AUTH') {
       return await _authenticateUserDefaultAuth(authDetails);
     }
     throw UnimplementedError('Authentication flow type is not supported.');
@@ -630,6 +653,13 @@ class CognitoUser {
     }
 
     if (_clientSecretHash != null) {
+      // Update client hash with the response from the auth challenge
+      _clientSecretHash = calculateClientSecretHash(
+        srpUsername,
+        pool.getClientId()!,
+        _clientSecret!,
+      );
+
       challengeResponses['SECRET_HASH'] = _clientSecretHash;
     }
 
@@ -712,12 +742,14 @@ class CognitoUser {
 
   /// This is used for a certain user to confirm the registration by using a confirmation code
   Future<bool> confirmRegistration(String confirmationCode,
-      [bool forceAliasCreation = false]) async {
+      {bool forceAliasCreation = false,
+      Map<String, String>? clientMetadata}) async {
     final params = {
       'ClientId': pool.getClientId(),
       'ConfirmationCode': confirmationCode,
       'Username': username,
       'ForceAliasCreation': forceAliasCreation,
+      'ClientMetadata': clientMetadata
     };
 
     if (getUserContextData() != null) {
@@ -815,6 +847,10 @@ class CognitoUser {
       challengeResponses['DEVICE_KEY'] = _deviceKey;
     }
 
+    if (_clientSecretHash != null) {
+      challengeResponses['SECRET_HASH'] = _clientSecretHash;
+    }
+
     final paramsReq = {
       'ChallengeName': 'NEW_PASSWORD_REQUIRED',
       'ChallengeResponses': challengeResponses,
@@ -858,8 +894,21 @@ class CognitoUser {
       paramsReq['UserContextData'] = getUserContextData();
     }
 
-    final dataAuthenticate = await client!.request('RespondToAuthChallenge',
-        await _analyticsMetadataParamsDecorator.call(paramsReq));
+    dynamic dataAuthenticate;
+    try {
+      dataAuthenticate = await client!.request('RespondToAuthChallenge',
+          await _analyticsMetadataParamsDecorator.call(paramsReq));
+    } on CognitoClientException catch (e) {
+      // When trying to use MFA with a non verified phone_number this
+      // missleading error will be received because Cognito expects in this case
+      // the GUID style user name instead of the normal user name used in every
+      // other request.
+      if (e.code == "UserNotFoundException") {
+        throw CognitoUserPhoneNumberVerificationNecessaryException();
+      } else {
+        rethrow;
+      }
+    }
 
     final String? challengeName = dataAuthenticate['ChallengeName'];
 
@@ -934,11 +983,34 @@ class CognitoUser {
     return true;
   }
 
-  /// This is used by authenticated users to enable MFA for him/herself
+  /// This is used by authenticated users to enable SMS-MFA for him/herself.
+  /// A verified phone number is required.
   Future<bool> enableMfa() async {
     if (_signInUserSession == null || !_signInUserSession!.isValid()) {
       throw Exception('User is not authenticated');
     }
+    
+    bool phoneNumberVerified = false;
+    final getUserParamsReq = {
+      'AccessToken': _signInUserSession!.getAccessToken().getJwtToken(),
+    };
+    final userData = await client!.request('GetUser', getUserParamsReq);
+
+    if (userData['UserAttributes'] != null) {
+      dynamic userAttributes = userData['UserAttributes'];
+      phoneNumberVerified = null !=
+          userAttributes.firstWhere(
+              (attribute) =>
+                  attribute['Name'] == 'phone_number_verified' &&
+                  attribute['Value'] == 'true', orElse: () {
+            return null;
+          });
+    }
+
+    if (!phoneNumberVerified) {
+      throw CognitoUserPhoneNumberVerificationNecessaryException(
+          signInUserSession: _signInUserSession);
+    }    
 
     final mfaOptions = [];
     final mfaEnabled = {
@@ -1110,6 +1182,8 @@ class CognitoUser {
   }
 
   /// This is used by authenticated users to change a list of attributes
+  /// If phone_number is changed it needs to be verified to be able to use it
+  /// for MFA.
   Future<bool> updateAttributes(List<CognitoUserAttribute> attributes) async {
     if (_signInUserSession == null || !_signInUserSession!.isValid()) {
       throw Exception('User is not authenticated');

@@ -1,3 +1,32 @@
+## 3.2.0
+- added: better handling of unverified phone numbers using sms mfa
+- added: allow CUSTOM_AUTH authentication flow via SRP password verification
+
+## 3.1.1
+- fixed: CognitoUser.getSession throws TypeError when storage returns null for clockDrift
+
+## 3.1.0
+- feat: try to refresh session if access token is null
+
+## 3.0.3
+- fixed: clientSecret instead of client secret hash in refresh session
+
+## 3.0.2
+- added: secret hash to sendNewPasswordRequired function
+
+## 3.0.1
+- added: Regen SECRET_HASH using the srp username
+
+## 3.0.0
+- breaking: confirmRegistration forceAliasCreation parameter as named
+- added: confirmRegistration clientMetadata parameter
+
+## 2.1.3
+- fixes: SECRET_HASH parameter in  `CognitoUser` `refreshSession()`
+
+## 2.1.2
+- adds: optional clientMetadata (Map<string,string>) to signup
+
 ## 2.1.1
 - fixed: unexpected nullref during "initiateAuth" (authParameters is optional parameter in AuthenticationDetails)
 
